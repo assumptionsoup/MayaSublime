@@ -60,12 +60,12 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     #print "SNIPS:", snips
 
         for sel in selections:
-
+            sel = self.view.substr(sel)
             #Split lines by carriage returns '\r'
             #Don't send lines starting with # or //
             #Escape string literals defined with ''', but nothing else
             snips.extend(line.replace(r"'''", r"\'\'\'") for line in
-                            re.split(r'[\r]+', self.view.substr(sel))
+                            sel.splitlines()
                             if not re.match(r'^//|#', line))
             # I dislike this approach for several reasons. Lines
             # starting with # or // may already be escaped on an earlier
