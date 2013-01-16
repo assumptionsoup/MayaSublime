@@ -1,5 +1,5 @@
 {
-	
+
 	// Maya commandPort HOST name (127.0.0.1, ...)
 	"maya_hostname": "127.0.0.1",
 

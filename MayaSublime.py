@@ -32,14 +32,10 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         port = _settings['py_port'] if lang == 'python' else _settings['mel_port']
 
         selections = self.view.sel()  # Returns type sublime.RegionSet
-        selSize = 0
-        for sel in selections:
-            if not sel.empty():
-                selSize += 1
-
+        has_selection = any(not sel.empty() for sel in selections)
         snips = []
 
-        if selSize == 0:
+        if not has_selection:
             print "Nothing Selected, Attempting to Source/Import Current File"
             if self.view.is_dirty():
                 sublime.error_message("Save Changes Before Maya Source/Import")
@@ -56,9 +52,17 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     #print "SNIPS:", snips
 
         for sel in selections:
+            #Split lines by carriage returns '\r'
+            #Don't send lines starting with # or //
+            #Escape string literals defined with ''', but nothing else
             snips.extend(line.replace(r"'''", r"\'\'\'") for line in
                             re.split(r'[\r]+', self.view.substr(sel))
                             if not re.match(r'^//|#', line))
+            # I dislike this approach for several reasons. Lines
+            # starting with # or // may already be escaped on an earlier
+            # line and thus should be included for the functioning of
+            # that program Escaping only ''' probably doesn't encompass
+            # everything that needs to be escaped
 
         mCmd = str('\n'.join(snips))
         if not mCmd:
