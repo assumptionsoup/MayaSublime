@@ -4,9 +4,12 @@
 	"maya_hostname": "127.0.0.1",
 
 	// Maya commandPort to communicate via Python
-	"python_command_port" : 7002,
+	"maya_python_port" : 7002,
 
 	// Maya commandPort to communicate via MEL
-	"mel_command_port" : 7001
+	"maya_mel_port" : 7001,
+
+    // Valid values are: send_selection, send_line, send_file
+    "maya_on_selection" : "send_selection"
 
 }

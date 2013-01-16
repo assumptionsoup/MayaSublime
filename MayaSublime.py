@@ -5,9 +5,17 @@ import re
 import os.path
 
 _settings = {
-    'host'       : '127.0.0.1',
-    'mel_port'   : 7001,
-    'py_port'    : 7002
+    'hostname': '127.0.0.1',
+    'mel_port': 7001,
+    'python_port': 7002,
+
+    # Possible future settings/features
+    'on_selection': 'send_selection',  # send_line or send_file
+    'on_send_file': 'import_file',  # execute file
+    'use_temp_dir': True,  # saves current file to temp directory in the
+                           # background, circumventing the need to save.
+                           # Only works for execute file?
+    # Need a way to send a specific file through a shortcut
 }
 
 
@@ -28,8 +36,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             print 'No Maya Recognized Language Found'
             return
 
-        host = _settings['host']
-        port = _settings['py_port'] if lang == 'python' else _settings['mel_port']
+        host = _settings['hostname']
+        port = _settings['python_port'] if lang == 'python' else _settings['mel_port']
 
         selections = self.view.sel()  # Returns type sublime.RegionSet
         has_selection = any(not sel.empty() for sel in selections)
@@ -52,6 +60,7 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     #print "SNIPS:", snips
 
         for sel in selections:
+
             #Split lines by carriage returns '\r'
             #Don't send lines starting with # or //
             #Escape string literals defined with ''', but nothing else
@@ -98,10 +107,12 @@ def settings_obj():
 def sync_settings():
     global _settings
     so = settings_obj()
-    _settings['host']        = so.get('maya_hostname')
-    _settings['py_port']     = so.get('python_command_port')
-    _settings['mel_port']    = so.get('mel_command_port')
 
+    # Set global settings if they exist
+    for key in _settings.keys():
+        value = so.get('maya_%s' % key)
+        if value is not None:
+            _settings[key] = value
 
 
 settings_obj().clear_on_change("MayaSublime.settings")
