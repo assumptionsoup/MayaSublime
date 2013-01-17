@@ -21,14 +21,6 @@ _settings = {
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
 
-    PY_CMD_TEMPLATE = textwrap.dedent('''
-                                        import traceback
-                                        import __main__
-                                        try:
-                                            exec(%r, __main__.__dict__, __main__.__dict__)
-                                        except:
-                                            traceback.print_exc()''')
-
     def run(self, edit):
 
 
