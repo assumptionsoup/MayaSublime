@@ -21,7 +21,13 @@ _settings = {
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
 
-    PY_CMD_TEMPLATE = "import traceback\nimport __main__\ntry:\n\texec('''%s''', __main__.__dict__, __main__.__dict__)\nexcept:\n\ttraceback.print_exc()"
+    PY_CMD_TEMPLATE = textwrap.dedent('''
+                                        import traceback
+                                        import __main__
+                                        try:
+                                            exec(%r, __main__.__dict__, __main__.__dict__)
+                                        except:
+                                            traceback.print_exc()''')
 
     def run(self, edit):
 
@@ -39,8 +45,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         host = _settings['hostname']
         port = _settings['python_port'] if lang == 'python' else _settings['mel_port']
 
-        selections = self.view.sel()  # Returns type sublime.RegionSet
-        has_selection = any(not sel.empty() for sel in selections)
+        send_regions = self.view.sel()  # Returns type sublime.regions
+        has_selection = any(not sel.empty() for sel in send_regions)
         snips = []
 
         if not has_selection:
@@ -59,19 +65,9 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                         snips.append('rehash; source {0};'.format(module_name))
                     #print "SNIPS:", snips
 
-        for sel in selections:
-            sel = self.view.substr(sel)
-            #Split lines by carriage returns '\r'
-            #Don't send lines starting with # or //
-            #Escape string literals defined with ''', but nothing else
-            snips.extend(line.replace(r"'''", r"\'\'\'") for line in
-                            sel.splitlines()
-                            if not re.match(r'^//|#', line))
-            # I dislike this approach for several reasons. Lines
-            # starting with # or // may already be escaped on an earlier
-            # line and thus should be included for the functioning of
-            # that program Escaping only ''' probably doesn't encompass
-            # everything that needs to be escaped
+        for region in send_regions:
+            selection = self.view.substr(region)
+            snips.extend(line for line in selection.splitlines())
 
         mCmd = str('\n'.join(snips))
         if not mCmd:
@@ -80,10 +76,14 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         print 'Sending:\n%s...\n' % mCmd[:200]
 
         if lang == 'python':
-            mCmd = self.PY_CMD_TEMPLATE % mCmd
+            mCmd = ("import traceback\n"
+                    "import __main__\n"
+                    "try:\n"
+                    "    exec(%r, __main__.__dict__, __main__.__dict__)\n"
+                    "except:\n"
+                    "    traceback.print_exc()" % mCmd)
 
         c = None
-
         try:
             c = Telnet(host, int(port), timeout=3)
             c.write(mCmd)
