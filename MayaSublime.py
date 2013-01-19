@@ -3,6 +3,7 @@ from telnetlib import Telnet
 import time
 import re
 import os.path
+import abc
 
 _settings = {
     'hostname': '127.0.0.1',
@@ -43,19 +44,24 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
         if not has_selection:
             print "Nothing Selected, Attempting to Source/Import Current File"
-            if self.view.is_dirty():
-                sublime.error_message("Save Changes Before Maya Source/Import")
-            else:
-                file_path = self.view.file_name()
-                if file_path is not None:
-                    file_name = os.path.basename(file_path)
-                    module_name = os.path.splitext(file_name)[0]
 
-                    if lang == 'python':
-                        snips.append('import {0}\nreload({0})'.format(module_name))
-                    else:
-                        snips.append('rehash; source {0};'.format(module_name))
-                    #print "SNIPS:", snips
+            # Check for unsaved changes
+            if self.view.is_dirty():
+                if sublime.ok_cancel_dialog('Save changes and send to Maya?', 'Save'):
+                    self.view.run_command('save')
+                else:
+                    return
+
+            file_path = self.view.file_name()
+            if file_path is not None:
+                file_name = os.path.basename(file_path)
+                module_name = os.path.splitext(file_name)[0]
+
+                if lang == 'python':
+                    snips.append('import {0}\nreload({0})'.format(module_name))
+                else:
+                    snips.append('rehash; source {0};'.format(module_name))
+                #print "SNIPS:", snips
 
         for region in send_regions:
             selection = self.view.substr(region)
