@@ -1,10 +1,9 @@
 import sublime, sublime_plugin
 from telnetlib import Telnet
 import time
-import re
 import os.path
-import abc
 
+SUPPORTED_LANGUAGES = ['python', 'mel']
 _settings = {
     'hostname': '127.0.0.1',
     'mel_port': 7001,
@@ -25,18 +24,17 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
     def run(self, edit):
 
 
+        # Find current document language with case insensitive search.
         syntax = self.view.settings().get('syntax')
-
-        if re.search(r'python', syntax, re.I):
-            lang = 'python'
-        elif re.search(r'mel', syntax, re.I):
-            lang = 'mel'
-        else:
+        lang = next((lang for lang in SUPPORTED_LANGUAGES if lang in syntax.lower()), None)
+        if lang is None:
             print 'No Maya Recognized Language Found'
             return
 
-        host = _settings['hostname']
-        port = _settings['python_port'] if lang == 'python' else _settings['mel_port']
+        # Make sure there is a port for that language
+        if '%s_port' % lang not in _settings.keys():
+            print 'No port defined for %s language.' % lang
+            return
 
         send_regions = self.view.sel()  # Returns type sublime.regions
         has_selection = any(not sel.empty() for sel in send_regions)
@@ -81,6 +79,9 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     "except:\n"
                     "    traceback.print_exc()" % mCmd)
 
+        self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
+
+    def send_command(self, mCmd, host, port):
         c = None
         try:
             c = Telnet(host, int(port), timeout=3)
@@ -96,7 +97,6 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         finally:
             if c is not None:
                 c.close()
-
 
 def settings_obj():
     return sublime.load_settings("MayaSublime.sublime-settings")
