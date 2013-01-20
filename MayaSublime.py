@@ -36,11 +36,9 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             print 'No port defined for %s language.' % lang
             return
 
-        send_regions = self.view.sel()  # Returns type sublime.regions
-        has_selection = any(not sel.empty() for sel in send_regions)
-        snips = []
+        snips = self.get_selection()
 
-        if not has_selection:
+        if not snips:
             print "Nothing Selected, Attempting to Source/Import Current File"
 
             # Check for unsaved changes
@@ -61,9 +59,6 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     snips.append('rehash; source {0};'.format(module_name))
                 #print "SNIPS:", snips
 
-        for region in send_regions:
-            selection = self.view.substr(region)
-            snips.extend(line for line in selection.splitlines())
 
         mCmd = str('\n'.join(snips))
         if not mCmd:
@@ -82,6 +77,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
     def send_command(self, mCmd, host, port):
+        '''Send the string mCmd to host:port using Telnet'''
+
         c = None
         try:
             c = Telnet(host, int(port), timeout=3)
@@ -97,6 +94,20 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         finally:
             if c is not None:
                 c.close()
+
+    def get_selection(self):
+        '''Return current selection as a list of string source lines.
+        Obey rules defined in _settings.'''
+
+        selections = []
+        if not _settings['on_selection'] == 'send_file':
+            for region in self.view.sel():
+                if _settings['on_selection'] == 'send_line':
+                    region = self.view.line(region)
+
+                substr = self.view.substr(region)
+                selections.extend(line for line in substr.splitlines())
+        return selections
 
 def settings_obj():
     return sublime.load_settings("MayaSublime.sublime-settings")
