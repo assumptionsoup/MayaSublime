@@ -9,7 +9,10 @@
 	// Maya commandPort to communicate via MEL
 	"maya_mel_port" : 7001,
 
-    // Valid values are: send_selection, send_line, send_file
-    "maya_on_selection" : "send_selection"
+    // Valid values are: send_selection, send_line, and send_file
+    "maya_on_selection" : "send_selection",
+
+    // Valid values are: import_file and execute_file
+    "maya_on_send_file" : "source_file"
 
 }

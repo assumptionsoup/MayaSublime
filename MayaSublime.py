@@ -2,7 +2,7 @@ import sublime, sublime_plugin
 from telnetlib import Telnet
 import time
 import sys
-import os.path
+import os
 import logging
 
 SUPPORTED_LANGUAGES = ['python', 'mel']
@@ -10,14 +10,14 @@ _settings = {
     'hostname': '127.0.0.1',
     'mel_port': 7001,
     'python_port': 7002,
+    'on_selection': 'send_selection',  # send_line or send_file
+    'on_send_file': 'import_file',  # execute_file
 
     # Possible future settings/features
-    'on_selection': 'send_selection',  # send_line or send_file
-    'on_send_file': 'import_file',  # execute file
     'use_temp_dir': True,  # saves current file to temp directory in the
                            # background, circumventing the need to save.
                            # Only works for execute file?
-    # Need a way to send a specific file through a shortcut
+    # Need a way to send a specific file through a shortcut?
 }
 
 # Create one logger only.
@@ -32,11 +32,9 @@ except:
     hdlr.setFormatter(fmtr)
     _logger.addHandler(hdlr)
 
+
 class SendToMayaCommand(sublime_plugin.TextCommand):
-
     def run(self, edit):
-
-
         # Find current document language with case insensitive search.
         syntax = self.view.settings().get('syntax')
         lang = next((lang for lang in SUPPORTED_LANGUAGES if lang in syntax.lower()), None)
@@ -49,31 +47,16 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             _logger.info('No port defined for %s language!', lang)
             return
 
-        snips = self.get_selection()
-
-        if snips:
+        # Get list of lines to send to Maya
+        source_lines = self.get_selection()
+        if source_lines:
             _logger.info('Attempting to send current selection.')
         else:
             _logger.info('Attempting to send current file.')
+            source_lines = self.get_file(lang)
 
-            # Check for unsaved changes
-            if self.view.is_dirty():
-                if sublime.ok_cancel_dialog('Save changes and send to Maya?', 'Save'):
-                    self.view.run_command('save')
-                else:
-                    return
-
-            file_path = self.view.file_name()
-            if file_path is not None:
-                file_name = os.path.basename(file_path)
-                module_name = os.path.splitext(file_name)[0]
-
-                if lang == 'python':
-                    snips.append('import {0}\nreload({0})'.format(module_name))
-                else:
-                    snips.append('rehash; source {0};'.format(module_name))
-
-        mCmd = str('\n'.join(snips))
+        # Not sure if Maya expects os specific line breaks
+        mCmd = str('\n'.join(source_lines))
         if not mCmd:
             return
 
@@ -120,7 +103,39 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
                 substr = self.view.substr(region)
                 selections.extend(line for line in substr.splitlines())
+
         return selections
+
+    def get_file(self, lang):
+        '''Return list of strings needed to source file the current
+        file.  Obeys rules defined in _settings'''
+
+        source_lines = []
+        if _settings['on_send_file'] == 'execute_file':
+            file_region = sublime.Region(0, self.view.size())
+            source_lines = self.view.substr(file_region)
+            source_lines = source_lines.splitlines()
+        else:
+            # Check for unsaved changes / Prompt to save if so
+            if self.view.is_dirty():
+                if sublime.ok_cancel_dialog('Save changes and send to Maya?', 'Save'):
+                    self.view.run_command('save')
+                else:
+                    return
+
+            # Get file path
+            file_path = self.view.file_name()
+            if file_path is not None:
+                file_name = os.path.basename(file_path)
+                module_name = os.path.splitext(file_name)[0]
+
+                if lang == 'python':
+                    source_line = 'import {0}\nreload({0})'.format(module_name)
+                else:
+                    source_line = 'rehash; source {0};'
+                source_lines.append(source_line)
+        return source_lines
+
 
 def settings_obj():
     return sublime.load_settings("MayaSublime.sublime-settings")
