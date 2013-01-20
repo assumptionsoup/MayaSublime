@@ -1,7 +1,9 @@
 import sublime, sublime_plugin
 from telnetlib import Telnet
 import time
+import sys
 import os.path
+import logging
 
 SUPPORTED_LANGUAGES = ['python', 'mel']
 _settings = {
@@ -18,6 +20,17 @@ _settings = {
     # Need a way to send a specific file through a shortcut
 }
 
+# Create one logger only.
+try:
+    _logger
+except:
+    # Loggers are surprisingly verbose to set up
+    _logger = logging.getLogger(__name__)
+    _logger.setLevel(logging.INFO)
+    hdlr = logging.StreamHandler(sys.stdout)
+    fmtr = logging.Formatter("%(name)s: %(levelname)s: %(message)s")
+    hdlr.setFormatter(fmtr)
+    _logger.addHandler(hdlr)
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
 
@@ -28,18 +41,20 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         syntax = self.view.settings().get('syntax')
         lang = next((lang for lang in SUPPORTED_LANGUAGES if lang in syntax.lower()), None)
         if lang is None:
-            print 'No Maya Recognized Language Found'
+            _logger.info('No recognized language found!')
             return
 
         # Make sure there is a port for that language
         if '%s_port' % lang not in _settings.keys():
-            print 'No port defined for %s language.' % lang
+            _logger.info('No port defined for %s language!', lang)
             return
 
         snips = self.get_selection()
 
-        if not snips:
-            print "Nothing Selected, Attempting to Source/Import Current File"
+        if snips:
+            _logger.info('Attempting to send current selection.')
+        else:
+            _logger.info('Attempting to send current file.')
 
             # Check for unsaved changes
             if self.view.is_dirty():
@@ -57,14 +72,12 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     snips.append('import {0}\nreload({0})'.format(module_name))
                 else:
                     snips.append('rehash; source {0};'.format(module_name))
-                #print "SNIPS:", snips
-
 
         mCmd = str('\n'.join(snips))
         if not mCmd:
             return
 
-        print 'Sending:\n%s...\n' % mCmd[:200]
+        _logger.info('Sending:\n%s...\n', mCmd[:200])
 
         if lang == 'python':
             mCmd = ("import traceback\n"
