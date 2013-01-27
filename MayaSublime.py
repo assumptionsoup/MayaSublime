@@ -4,7 +4,11 @@ import time
 import sys
 import os
 import logging
+import threading
+import platform
+from contextlib import contextmanager
 
+PLATFORM = platform.system()
 SUPPORTED_LANGUAGES = ['python', 'mel']
 _settings = {
     'hostname': '127.0.0.1',
@@ -14,6 +18,7 @@ _settings = {
     'on_send_file': 'import_file',  # execute_file
 
     # Possible future settings/features
+    'print_results': True,
     'use_temp_dir': True,  # saves current file to temp directory in the
                            # background, circumventing the need to save.
                            # Only works for execute file?
@@ -33,7 +38,28 @@ except:
     _logger.addHandler(hdlr)
 
 
+def get_time():
+    '''Get the most accurate time for the given os'''
+    if platform == 'Windows':
+        return time.clock()
+    else:
+        return time.time()
+
+
+@contextmanager
+def edit_view(view):
+    edit = None
+    try:
+        edit = view.begin_edit()
+        yield edit
+    finally:
+        if edit is not None:
+            view.end_edit(edit)
+
+
 class SendToMayaCommand(sublime_plugin.TextCommand):
+    text_to_output = []
+
     def run(self, edit):
         # Find current document language with case insensitive search.
         syntax = self.view.settings().get('syntax')
@@ -55,10 +81,11 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             _logger.info('Attempting to send current file.')
             source_lines = self.get_file(lang)
 
-        # Not sure if Maya expects os specific line breaks
-        mCmd = str('\n'.join(source_lines))
-        if not mCmd:
+        if not source_lines:
             return
+
+        # Maya expects \n, not os specific line breaks
+        mCmd = str('\n'.join(source_lines))
 
         _logger.info('Sending:\n%s...\n', mCmd[:200])
 
@@ -73,23 +100,78 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
     def send_command(self, mCmd, host, port):
-        '''Send the string mCmd to host:port using Telnet'''
-
-        c = None
+        '''Send the string mCmd to Maya using host:port'''
+        connection = None
         try:
-            c = Telnet(host, int(port), timeout=3)
-            c.write(mCmd)
-        except Exception, e:
+            connection = Telnet(host, int(port), timeout=3)
+            connection.write(mCmd)
+            # if _settings['print_results']:
+            if _settings['print_results']:
+                self.print_response(connection, 3)
+        except Exception as e:
             err = str(e)
             sublime.error_message(
                 "Failed to communicate with Maya (%(host)s:%(port)s)):\n%(err)s" % locals()
             )
             raise
-        else:
-            time.sleep(.1)
         finally:
-            if c is not None:
-                c.close()
+            if connection is not None and not _settings['print_results']:
+                _logger.info('closing connection')
+                connection.close()
+
+    def print_response(self, connection, timeout):
+        '''Create a separate thread to print Maya's response'''
+
+        def print_response_thread():
+            start_time = get_time()
+            try:
+                while get_time() - start_time <= timeout:
+                    try:
+                        response = connection.read_very_eager()
+                    except EOFError:
+                        # Connection is closed
+                        break
+                    except AttributeError:
+                        pass
+
+                    if response:
+                        # Maya really loves spitting back a lot of extra newlines
+                        # stuff.
+                        response = response.replace(u'\n\n\n', u'\n')
+                        response = response.replace('None', '', 1)
+                        response = response.strip()
+                        self.append_to_output(response)
+                        _logger.info('RESULTS:\n>%s\n' % '\n> '.join(response.splitlines()))
+                _logger.info('done listening')
+            finally:
+                connection.close()
+
+        # Start the thread
+        threading.Thread(target=print_response_thread).start()
+
+    def append_to_output(self, text):
+        self.text_to_output.append(text)
+        sublime.set_timeout(self.display_output, 0)
+
+    def display_output(self, panel_name='MayaSublime'):
+        if not self.text_to_output:
+            return
+
+        # get_output_panel doesn't "get" the panel, it *creates* it,
+        # so we should only call get_output_panel once
+        win = self.view.window()
+        if not hasattr(self, 'output_view'):
+            self.output_view = win.get_output_panel(panel_name)
+        view = self.output_view
+
+        # Write this text to the output panel and display it
+        with edit_view(view) as edit:
+            view.insert(edit, view.size(), '\n' + '\n'.join(self.text_to_output))
+        self.text_to_output = []
+
+        # Show window
+        view.show(view.size())
+        win.run_command("show_panel", {"panel": "output.%s" % panel_name})
 
     def get_selection(self):
         '''Return current selection as a list of string source lines.
