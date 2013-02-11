@@ -59,6 +59,7 @@ def edit_view(view):
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
     text_to_output = []
+    selected_lines = []
 
     def run(self, edit):
         # Find current document language with case insensitive search.
@@ -90,12 +91,15 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         _logger.info('Sending:\n%s...\n', mCmd[:200])
 
         if lang == 'python':
-            mCmd = ("import traceback\n"
-                    "import __main__\n"
-                    "try:\n"
-                    "    exec(%r, __main__.__dict__, __main__.__dict__)\n"
-                    "except:\n"
-                    "    traceback.print_exc()" % mCmd)
+            file_name = self.view.file_name()
+            file_name = file_name.split('/')[-1]
+            file_name = file_name.split('\\')[-1]
+            file_name = '<%s>' % file_name
+            mCmd = ("import sublime_maya_interface\n"
+                    "reload(sublime_maya_interface)\n"
+                    "sublime_maya_interface.execute_sublime_code(%r, %r, %r)" %
+                    (mCmd, file_name, self.selected_lines))
+
 
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
@@ -135,21 +139,27 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                         pass
 
                     if response:
-                        # Maya really loves spitting back a lot of extra newlines
-                        # stuff.
-                        response = response.replace(u'\n\n\n', u'\n')
-                        response = response.replace('None', '', 1)
+                        start_time = get_time()
+                        # Maya really likes extra newlines.
+                        seperator = '\n\n\n'
+                        response = response.replace(seperator, u'\n')
+                        response = response.replace('None', '', 1)  # Maya likes sending the string 'None' first.
                         response = response.strip()
-                        self.append_to_output(response)
                         _logger.info('RESULTS:\n>%s\n' % '\n> '.join(response.splitlines()))
-                _logger.info('done listening')
+                        if response:
+                            self.append_line_to_output(response)
+
+                        # Reset timer.
+                        sublime.set_timeout(self.display_output, 0)
+                self.text_to_output = []
+                _logger.info('Done listening.')
             finally:
                 connection.close()
 
         # Start the thread
         threading.Thread(target=print_response_thread).start()
 
-    def append_to_output(self, text):
+    def append_line_to_output(self, text):
         self.text_to_output.append(text)
         sublime.set_timeout(self.display_output, 0)
 
@@ -157,42 +167,94 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         if not self.text_to_output:
             return
 
-        # get_output_panel doesn't "get" the panel, it *creates* it,
-        # so we should only call get_output_panel once
+        # Default the to the current files directory
+        if not (self.view and self.view.file_name()):
+            return
+
         win = self.view.window()
         if not hasattr(self, 'output_view'):
             self.output_view = win.get_output_panel(panel_name)
+
         view = self.output_view
+        working_dir = os.path.dirname(self.view.file_name())
+
+        self.output_view.set_syntax_file('Packages/Python/Python.tmLanguage')
+        self.output_view.settings().set("result_file_regex", '^[ ]+File \"<(...*?)>\", line ([0-9]+)')
+        self.output_view.settings().set("result_line_regex", 'line ([0-9]+)')
+        self.output_view.settings().set("result_base_dir", working_dir)
+
+        # Call get_output_panel a second time after assigning the above
+        # settings, so that it'll be picked up as a result buffer
+        win.get_output_panel(panel_name)
+
 
         # Write this text to the output panel and display it
         with edit_view(view) as edit:
-            view.insert(edit, view.size(), '\n' + '\n'.join(self.text_to_output))
-        self.text_to_output = []
+            view.insert(edit, view.size(), '\n'.join(self.text_to_output))
+        # self.text_to_output = []
 
         # Show window
         view.show(view.size())
         win.run_command("show_panel", {"panel": "output.%s" % panel_name})
+
 
     def get_selection(self):
         '''Return current selection as a list of string source lines.
         Obey rules defined in _settings.'''
 
         selections = []
+        selected_lines = []
         if not _settings['on_selection'] == 'send_file':
             for region in self.view.sel():
                 if _settings['on_selection'] == 'send_line':
                     region = self.view.line(region)
 
+                lines = self.get_lines_from_region(region)
+                if lines:
+                    selected_lines.append(lines)
                 substr = self.view.substr(region)
                 selections.extend(line for line in substr.splitlines())
 
+        # Collapse overlapping selected lines and save
+        # self.selected_lines as a list of ranges
+        self.selected_lines = []
+        skip = 0
+        for x, region in enumerate(selected_lines):
+            if skip:
+                skip = 0
+                continue
+
+            if x + 1 < len(selected_lines):
+                if region[1] == selected_lines[x + 1][0]:
+                    region = [region[0], selected_lines[x + 1]]
+                    skip = 1
+            self.selected_lines.append(range(region[0], region[1] + 1))
+
         return selections
+
+    def get_lines_from_region(self, region):
+        if region.begin() == region.end():
+            return None
+        # print self.view.lines(region)
+        start_line, start_col = self.view.rowcol(region.begin())
+        # start_line_region = self.view.line(region.begin())
+        # if start_line_region.end() == region.begin():
+        #     # start line has no width!
+        #     start_line += 1
+        end_line, end_col = self.view.rowcol(region.end())
+        end_line_region = self.view.line(region.end())
+        if end_line_region.begin() == region.end():
+            # end line has no width!
+            end_line -= 1
+
+        return start_line + 1, end_line + 1
 
     def get_file(self, lang):
         '''Return list of strings needed to source file the current
         file.  Obeys rules defined in _settings'''
 
         source_lines = []
+        self.selected_lines = []
         if _settings['on_send_file'] == 'execute_file':
             file_region = sublime.Region(0, self.view.size())
             source_lines = self.view.substr(file_region)
