@@ -96,9 +96,12 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
         if lang == 'python':
             file_name = self.view.file_name()
-            file_name = file_name.split('/')[-1]
-            file_name = file_name.split('\\')[-1]
-            file_name = '<%s>' % file_name
+            if file_name:
+                file_name = file_name.split('/')[-1]
+                file_name = file_name.split('\\')[-1]
+                file_name = '<%s>' % file_name
+            else:
+                file_name = '<untitled>'
             mCmd = ("import sublime_maya_interface\n"
                     "reload(sublime_maya_interface)\n"
                     "sublime_maya_interface.execute_sublime_code(%r, %r, %r)" %
