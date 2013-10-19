@@ -197,7 +197,6 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         view.show(view.size())
         win.run_command("show_panel", {"panel": "output.%s" % panel_name})
 
-
     def get_selection(self):
         '''Return current selection as a list of string source lines.
         Obey rules defined in _settings.'''
@@ -235,12 +234,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
     def get_lines_from_region(self, region):
         if region.begin() == region.end():
             return None
-        # print self.view.lines(region)
+
         start_line, start_col = self.view.rowcol(region.begin())
-        # start_line_region = self.view.line(region.begin())
-        # if start_line_region.end() == region.begin():
-        #     # start line has no width!
-        #     start_line += 1
         end_line, end_col = self.view.rowcol(region.end())
         end_line_region = self.view.line(region.end())
         if end_line_region.begin() == region.end():

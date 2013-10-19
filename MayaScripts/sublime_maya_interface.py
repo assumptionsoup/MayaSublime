@@ -83,7 +83,7 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
     eval_code = None
     exec_code = None
     try:
-        # Try to eval code first, if this failes, then the code is most
+        # Try to eval code first, if this fails, then the code is most
         # likely not eval-able (has a statement in it)
         eval_code = compile(code, file_name, 'eval')
     except SyntaxError:
@@ -93,7 +93,7 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
         try:
             exec_code = compile(code, file_name, 'exec')
         except Exception:
-            # There is an actual syntax in the code provided.  Print it.
+            # There is an actual syntax error in the code provided.  Print it.
             print _exc_info_to_string(sys.exc_info(), file_name, selected_lines)
             return
 
@@ -103,6 +103,7 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
             if result:
                 print repr(result)
         elif exec_code:
-            exec(exec_code, __main__.__dict__, __main__.__dict__)
+            result = exec(exec_code, __main__.__dict__, __main__.__dict__)
+            print repr(result)
     except Exception:
         print _exc_info_to_string(sys.exc_info(), file_name, selected_lines)
