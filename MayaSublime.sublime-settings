@@ -13,6 +13,14 @@
     "maya_on_selection" : "send_selection",
 
     // Valid values are: import_file and execute_file
-    "maya_on_send_file" : "source_file"
+    "maya_on_send_file" : "source_file",
+
+    // Show results from the script in an output panel
+    "maya_print_results" : true,
+
+    // Identifying phrases which indicate a file is a python plugin.
+    // Requires a 2 dimenional list, which is equivalent to (('A' AND 'B') OR ('C' AND 'D')
+    "maya_python_plugin_identifiers" : [["def initializePlugin", "def uninitializePlugin"],
+                                        ["NODE_NAME", "NODE_ID", "NODE_CLASS"]]
 
 }

@@ -16,9 +16,13 @@ _settings = {
     'python_port': 7002,
     'on_selection': 'send_selection',  # send_line or send_file
     'on_send_file': 'import_file',  # execute_file
+    'print_results': True,
 
     # Possible future settings/features
-    'print_results': True,
+    # Identifying phrases which indicate a file is a python plugin.
+    # Requires a 2 dimensional list, which is equivalent to (('A' AND 'B') OR ('C' AND 'D')
+    'python_plugin_identifiers': (('def initializePlugin', 'def uninitializePlugin'),
+                                  ('NODE_NAME', 'NODE_ID', 'NODE_CLASS')),
     'use_temp_dir': True,  # saves current file to temp directory in the
                            # background, circumventing the need to save.
                            # Only works for execute file?
@@ -103,13 +107,15 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
+    def is_python_plugin(self, file_contents):
+        pass
+
     def send_command(self, mCmd, host, port):
         '''Send the string mCmd to Maya using host:port'''
         connection = None
         try:
-            connection = Telnet(host, int(port), timeout=3)
+            connection = Telnet(host, int(port), timeout=10)
             connection.write(mCmd)
-            # if _settings['print_results']:
             if _settings['print_results']:
                 self.print_response(connection, 3)
         except Exception as e:
