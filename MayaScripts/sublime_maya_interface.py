@@ -103,7 +103,6 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
             if result:
                 print repr(result)
         elif exec_code:
-            result = exec(exec_code, __main__.__dict__, __main__.__dict__)
-            print repr(result)
+            exec(exec_code, __main__.__dict__, __main__.__dict__)
     except Exception:
         print _exc_info_to_string(sys.exc_info(), file_name, selected_lines)
