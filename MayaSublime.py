@@ -49,17 +49,9 @@ def get_time():
     else:
         return time.time()
 
-
-@contextmanager
-def edit_view(view):
-    edit = None
-    try:
-        edit = view.begin_edit()
-        yield edit
-    finally:
-        if edit is not None:
-            view.end_edit(edit)
-
+class AppendOutputCommand(sublime_plugin.TextCommand):
+    def run(self, edit, text):
+        self.view.insert(edit, self.view.size(), text)
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
     text_to_output = []
@@ -107,7 +99,6 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                     "sublime_maya_interface.execute_sublime_code(%r, %r, %r)" %
                     (mCmd, file_name, self.selected_lines))
 
-
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
     def is_python_plugin(self, file_contents):
@@ -116,6 +107,7 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
     def send_command(self, mCmd, host, port):
         '''Send the string mCmd to Maya using host:port'''
         connection = None
+        mCmd = bytes(mCmd, 'utf-8')
         try:
             connection = Telnet(host, int(port), timeout=10)
             connection.write(mCmd)
@@ -148,10 +140,11 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                         pass
 
                     if response:
+                        response = response.decode('utf-8')
                         start_time = get_time()
                         # Maya really likes extra newlines.
                         seperator = '\n\n\n'
-                        response = response.replace(seperator, u'\n')
+                        response = response.replace(seperator, '\n')
                         response = response.replace('None', '', 1)  # Maya likes sending the string 'None' first.
                         response = response.strip()
                         _logger.info('RESULTS:\n>%s\n' % '\n> '.join(response.splitlines()))
@@ -200,11 +193,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         # settings, so that it'll be picked up as a result buffer
         win.get_output_panel(panel_name)
 
-
         # Write this text to the output panel and display it
-        with edit_view(view) as edit:
-            view.insert(edit, view.size(), '\n'.join(self.text_to_output))
-        # self.text_to_output = []
+        view.run_command('append_output', {'text': '\n'.join(self.text_to_output)})
 
         # Show window
         view.show(view.size())
