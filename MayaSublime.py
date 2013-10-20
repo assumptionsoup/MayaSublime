@@ -177,15 +177,19 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             return
 
         # Default the to the current files directory
-        if not (self.view and self.view.file_name()):
+        if not self.view:
             return
+
+        file_name = self.view.file_name()
+        if file_name is None:
+            file_name = '<untitled>'
 
         win = self.view.window()
         if not hasattr(self, 'output_view'):
             self.output_view = win.get_output_panel(panel_name)
 
         view = self.output_view
-        working_dir = os.path.dirname(self.view.file_name())
+        working_dir = os.path.dirname(file_name)
 
         self.output_view.set_syntax_file('Packages/Python/Python.tmLanguage')
         self.output_view.settings().set("result_file_regex", '^[ ]+File \"<(...*?)>\", line ([0-9]+)')
