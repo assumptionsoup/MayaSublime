@@ -293,7 +293,7 @@ def sync_settings():
         if value is not None:
             _settings[key] = value
 
-
-settings_obj().clear_on_change("MayaSublime.settings")
-settings_obj().add_on_change("MayaSublime.settings", sync_settings)
-sync_settings()
+def plugin_loaded()
+    settings_obj().clear_on_change("MayaSublime.sublime-settings")
+    settings_obj().add_on_change("MayaSublime.sublime-settings", sync_settings)
+    sync_settings()
