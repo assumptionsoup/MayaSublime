@@ -1,4 +1,3 @@
-import sublime, sublime_plugin
 from telnetlib import Telnet
 import time
 import sys
@@ -6,7 +5,12 @@ import os
 import logging
 import threading
 import platform
-from contextlib import contextmanager
+import collections
+
+import sublime
+import sublime_plugin
+
+_ST3 = int(sublime.version()) >= 3000
 
 PLATFORM = platform.system()
 SUPPORTED_LANGUAGES = ['python', 'mel']
@@ -49,21 +53,12 @@ def get_time():
     else:
         return time.time()
 
-
-@contextmanager
-def edit_view(view):
-    edit = None
-    try:
-        edit = view.begin_edit()
-        yield edit
-    finally:
-        if edit is not None:
-            view.end_edit(edit)
-
+class AppendOutputCommand(sublime_plugin.TextCommand):
+    def run(self, edit, text):
+        self.view.insert(edit, self.view.size(), text)
 
 class SendToMayaCommand(sublime_plugin.TextCommand):
     text_to_output = []
-    selected_lines = []
 
     def run(self, edit):
         # Find current document language with case insensitive search.
@@ -79,12 +74,13 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             return
 
         # Get list of lines to send to Maya
-        source_lines = self.get_selection()
-        if source_lines:
-            _logger.info('Attempting to send current selection.')
-        else:
-            _logger.info('Attempting to send current file.')
+        if _settings['on_selection'] == 'send_file':
             source_lines = self.get_file(lang)
+        else:
+            whole_lines = _settings['on_selection'] == 'send_line'
+            source_lines = self.get_selection(whole_lines=whole_lines)
+            if not source_lines:
+                source_lines = self.get_file(lang)
 
         if not source_lines:
             return
@@ -104,9 +100,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                 file_name = '<untitled>'
             mCmd = ("import sublime_maya_interface\n"
                     "reload(sublime_maya_interface)\n"
-                    "sublime_maya_interface.execute_sublime_code(%r, %r, %r)" %
-                    (mCmd, file_name, self.selected_lines))
-
+                    "sublime_maya_interface.execute_sublime_code(%r, %r)" %
+                    (mCmd, file_name))
 
         self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
 
@@ -115,7 +110,13 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
     def send_command(self, mCmd, host, port):
         '''Send the string mCmd to Maya using host:port'''
+
         connection = None
+        if _ST3:
+            mCmd = bytes(mCmd, 'utf-8')
+        else:
+            mCmd = bytes(mCmd)
+
         try:
             connection = Telnet(host, int(port), timeout=10)
             connection.write(mCmd)
@@ -148,10 +149,11 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                         pass
 
                     if response:
+                        response = response.decode('utf-8')
                         start_time = get_time()
                         # Maya really likes extra newlines.
                         seperator = '\n\n\n'
-                        response = response.replace(seperator, u'\n')
+                        response = response.replace(seperator, '\n')
                         response = response.replace('None', '', 1)  # Maya likes sending the string 'None' first.
                         response = response.strip()
                         _logger.info('RESULTS:\n>%s\n' % '\n> '.join(response.splitlines()))
@@ -200,47 +202,48 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         # settings, so that it'll be picked up as a result buffer
         win.get_output_panel(panel_name)
 
-
         # Write this text to the output panel and display it
-        with edit_view(view) as edit:
-            view.insert(edit, view.size(), '\n'.join(self.text_to_output))
-        # self.text_to_output = []
+        view.run_command('append_output', {'text': '\n'.join(self.text_to_output)})
 
         # Show window
         view.show(view.size())
         win.run_command("show_panel", {"panel": "output.%s" % panel_name})
 
-    def get_selection(self):
-        '''Return current selection as a list of string source lines.
-        Obey rules defined in _settings.'''
+    def get_selection(self, whole_lines=False):
+        '''
+        Return current selection as a list of string source lines.
+        '''
 
-        selections = []
-        selected_lines = []
-        if not _settings['on_selection'] == 'send_file':
-            for region in self.view.sel():
-                if _settings['on_selection'] == 'send_line':
-                    region = self.view.line(region)
+        has_selection = False
+        # Store lines in map of (line_number, line_string)
+        selected_lines = collections.defaultdict(str)
+        for region in self.view.sel():
+            if whole_lines:
+                region = self.view.line(region)
 
-                lines = self.get_lines_from_region(region)
-                if lines:
-                    selected_lines.append(lines)
-                substr = self.view.substr(region)
-                selections.extend(line for line in substr.splitlines())
-
-        # Collapse overlapping selected lines and save
-        # self.selected_lines as a list of ranges
-        self.selected_lines = []
-        skip = 0
-        for x, region in enumerate(selected_lines):
-            if skip:
-                skip = 0
+            # Find the range of line indices that is selected in this region
+            numberRange = self.get_lines_from_region(region)
+            if numberRange is None:
                 continue
 
-            if x + 1 < len(selected_lines):
-                if region[1] == selected_lines[x + 1][0]:
-                    region = [region[0], selected_lines[x + 1]]
-                    skip = 1
-            self.selected_lines.append(range(region[0], region[1] + 1))
+            substr = self.view.substr(region)
+            lines = substr.splitlines()
+
+            # Match line number to line contents, and add to selected_lines
+            assert len(lines) == len(numberRange)
+            for line_number, line in zip(numberRange, lines):
+                # Always append to the line, in case a multi-selection
+                # is on the same line
+                selected_lines[line_number] += line
+                has_selection = True
+
+        if has_selection:
+            _logger.debug('Attempting to send current selection.')
+            file_region = sublime.Region(0, self.view.size())
+            last_line, col = self.view.rowcol(file_region.end())
+            selections = [selected_lines[x] for x in range(last_line + 1)]
+        else:
+            selections = []
 
         return selections
 
@@ -250,19 +253,19 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
         start_line, start_col = self.view.rowcol(region.begin())
         end_line, end_col = self.view.rowcol(region.end())
+
+        # Remove the last line if the cursor is at the start of the line
+        # (and therefore nothing is selected)
         end_line_region = self.view.line(region.end())
         if end_line_region.begin() == region.end():
-            # end line has no width!
             end_line -= 1
-
-        return start_line + 1, end_line + 1
+        return range(start_line, end_line + 1)
 
     def get_file(self, lang):
         '''Return list of strings needed to source file the current
         file.  Obeys rules defined in _settings'''
-
+        _logger.debug('Attempting to send current file.')
         source_lines = []
-        self.selected_lines = []
         if _settings['on_send_file'] == 'execute_file':
             file_region = sublime.Region(0, self.view.size())
             source_lines = self.view.substr(file_region)
@@ -303,7 +306,10 @@ def sync_settings():
         if value is not None:
             _settings[key] = value
 
+def plugin_loaded():
+    settings_obj().clear_on_change("MayaSublime.sublime-settings")
+    settings_obj().add_on_change("MayaSublime.sublime-settings", sync_settings)
+    sync_settings()
 
-settings_obj().clear_on_change("MayaSublime.settings")
-settings_obj().add_on_change("MayaSublime.settings", sync_settings)
-sync_settings()
+if not _ST3:
+    plugin_loaded()

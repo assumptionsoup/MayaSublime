@@ -1,5 +1,5 @@
 # MayaSublime
-### A Sublime Text 2 plugin
+### A Sublime Text 2/3 plugin
 
 Send selected MEL/Python code snippets or whole files to Maya via commandPort
 
@@ -7,8 +7,8 @@ Send selected MEL/Python code snippets or whole files to Maya via commandPort
 
 ### Installation
 
-1. clone this repo into the `SublimeText2 -> Preference -> Browse Packages` directory:
-`git clone git://github.com/justinfx/MayaSublime.git`
+1. clone this repo into the `SublimeText -> Preference -> Browse Packages` directory:
+`git clone git://github.com/assumptionsoup/MayaSublime.git`
 
 2. Copy the scripts in the MayaScripts folder to a script folder in Maya's Path.
 
