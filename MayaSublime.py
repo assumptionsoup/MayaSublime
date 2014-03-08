@@ -7,7 +7,10 @@ import threading
 import platform
 import collections
 
-import sublime, sublime_plugin
+import sublime
+import sublime_plugin
+
+_ST3 = int(sublime.version()) >= 3000
 
 PLATFORM = platform.system()
 SUPPORTED_LANGUAGES = ['python', 'mel']
@@ -109,7 +112,11 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         '''Send the string mCmd to Maya using host:port'''
 
         connection = None
-        mCmd = bytes(mCmd, 'utf-8')
+        if _ST3:
+            mCmd = bytes(mCmd, 'utf-8')
+        else:
+            mCmd = bytes(mCmd)
+
         try:
             connection = Telnet(host, int(port), timeout=10)
             connection.write(mCmd)
@@ -303,3 +310,6 @@ def plugin_loaded():
     settings_obj().clear_on_change("MayaSublime.sublime-settings")
     settings_obj().add_on_change("MayaSublime.sublime-settings", sync_settings)
     sync_settings()
+
+if not _ST3:
+    plugin_loaded()
