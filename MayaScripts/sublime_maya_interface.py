@@ -3,6 +3,11 @@
 import traceback
 import __main__
 import sys
+import maya.cmds as cmds
+import atexit
+import threading
+import time
+_commandPorts = []
 
 
 def _exc_info_to_string():
@@ -71,3 +76,63 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
             exec(exec_code, __main__.__dict__, __main__.__dict__)
     except Exception:
         print _exc_info_to_string()
+
+
+def openPort(port, sourceType='python', **kwargs):
+    '''
+    Opens a commandPort for MayaSublime to communicate with.
+
+    Will continue to try to open a commandPort in a separate thread if
+    the commandPort cannot be created.  This is to help with creating a
+    commandPort when there are multiple instances of mayas opened.  E.g
+    if two instances of maya are open, and the first one is closed, the
+    second one will then open a commandPort ensuring that communication
+    between sublimeText and maya can continue.
+
+    Given kwargs are passed to the cmds.commandPort command.
+    '''
+
+    kwargs['sourceType'] = sourceType
+
+    def _openPort():
+        global _commandPorts
+        if port in _commandPorts:
+            closePort(port)
+
+        while True:
+            try:
+                cmds.commandPort(name=":%d" % port, **kwargs)
+            except RuntimeError:
+                time.sleep(1)
+            else:
+                # Keep a record of opened ports to so we can close all
+                # open ports with closeAllPorts()
+                _commandPorts.append(port)
+                break
+
+    # Always defer starting threads or maya may crash with an xcb error
+    # if this code is run during startup (or possibly other times).  I
+    # encountered this problem on linux.
+    openPortThread = threading.Thread(target=_openPort)
+    cmds.evalDeferred(openPortThread.start)
+
+
+def closePort(port):
+    '''
+    Close a commandPort opened on the given port
+    '''
+    cmds.commandPort(name=':%d' % port, close=True)
+
+
+def closeAllPorts():
+    '''
+    Close all commandPorts opened via the openPort() function.
+    '''
+    for port in _commandPorts:
+        closePort(port)
+
+# Close command ports when maya exits.  Maya already handles this when
+# it exits cleanly, but not when it crashes.  Depending on how severe
+# the crash is, ports may still be left open even with this safety
+# measure.
+atexit.register(closeAllPorts)
