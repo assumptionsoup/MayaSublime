@@ -3,10 +3,14 @@
 import traceback
 import __main__
 import sys
-import maya.cmds as cmds
+import maya.utils
 import atexit
 import threading
 import time
+
+import maya.cmds as cmds
+
+
 _commandPorts = []
 
 
@@ -101,7 +105,8 @@ def openPort(port, sourceType='python', **kwargs):
 
         while True:
             try:
-                cmds.commandPort(name=":%d" % port, **kwargs)
+                maya.utils.executeInMainThreadWithResult(
+                    cmds.commandPort, name=":%d" % port, **kwargs)
             except RuntimeError:
                 time.sleep(1)
             else:
@@ -110,9 +115,8 @@ def openPort(port, sourceType='python', **kwargs):
                 _commandPorts.append(port)
                 break
 
-    # Always defer starting threads or maya may crash with an xcb error
-    # if this code is run during startup (or possibly other times).  I
-    # encountered this problem on linux.
+    # Always defer starting threads or Maya may do unexpected things.
+    # Like freezing or crashing.
     openPortThread = threading.Thread(target=_openPort)
     cmds.evalDeferred(openPortThread.start)
 
