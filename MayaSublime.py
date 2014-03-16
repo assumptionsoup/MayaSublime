@@ -99,7 +99,6 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             else:
                 file_name = '<untitled>'
             mCmd = ("import sublime_maya_interface\n"
-                    "reload(sublime_maya_interface)\n"
                     "sublime_maya_interface.execute_sublime_code(%r, %r)" %
                     (mCmd, file_name))
 

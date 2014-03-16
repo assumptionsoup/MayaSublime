@@ -12,7 +12,9 @@ import maya.cmds as cmds
 
 
 _commandPorts = []
-
+_pendingCommandPorts = []
+_portThread = None
+_portLock = threading.Lock()
 
 def _exc_info_to_string():
     """Converts a sys.exc_info() - style tuple of values into a string
@@ -82,6 +84,37 @@ def execute_sublime_code(code, file_name='<sublime_code>', selected_lines=None):
         print _exc_info_to_string()
 
 
+class OpenCommandPort(threading.Thread):
+    def run(self):
+        global _commandPorts
+        global _pendingCommandPorts
+
+        while _pendingCommandPorts:
+            # Lock is for _commandPorts and _pendingCommandPorts
+            # modification.  I've also made sure opening commandPorts is
+            # part of it, but I don't think that this is strictly
+            # necessary.
+            _portLock.acquire()
+            for port, kwargs in reversed(_pendingCommandPorts):
+                try:
+                    maya.utils.executeInMainThreadWithResult(
+                        cmds.commandPort, name=":%d" % port, **kwargs)
+                except RuntimeError:
+                    pass
+                else:
+                    # Keep a record of opened ports to so we can close all
+                    # open ports with closeAllPorts()
+                    _commandPorts.append(port)
+                    _pendingCommandPorts.remove([port, kwargs])
+
+                    # Defer print statement so stdout isn't jumbled
+                    cmds.evalDeferred(
+                        "print 'Opened %s command port on %d'" % (
+                            kwargs['sourceType'], port))
+            _portLock.release()
+            time.sleep(1)
+
+
 def openPort(port, sourceType='python', **kwargs):
     '''
     Opens a commandPort for MayaSublime to communicate with.
@@ -95,45 +128,39 @@ def openPort(port, sourceType='python', **kwargs):
 
     Given kwargs are passed to the cmds.commandPort command.
     '''
+    global _portThread
 
     kwargs['sourceType'] = sourceType
 
-    def _openPort():
-        global _commandPorts
-        if port in _commandPorts:
-            closePort(port)
+    if port in _commandPorts:
+        closePort(port)
 
-        while True:
-            try:
-                maya.utils.executeInMainThreadWithResult(
-                    cmds.commandPort, name=":%d" % port, **kwargs)
-            except RuntimeError:
-                time.sleep(1)
-            else:
-                # Keep a record of opened ports to so we can close all
-                # open ports with closeAllPorts()
-                _commandPorts.append(port)
-                break
-
-    # Always defer starting threads or Maya may do unexpected things.
-    # Like freezing or crashing.
-    openPortThread = threading.Thread(target=_openPort)
-    cmds.evalDeferred(openPortThread.start)
+    _pendingCommandPorts.append([port, kwargs])
+    if _portThread is None or not _portThread.is_alive():
+        _portThread = OpenCommandPort()
+        _portThread.start()
 
 
 def closePort(port):
     '''
     Close a commandPort opened on the given port
     '''
-    cmds.commandPort(name=':%d' % port, close=True)
 
+    _portLock.acquire()
+    cmds.commandPort(name=':%d' % port, close=True)
+    if port in _commandPorts:
+        _commandPorts.remove(port)
+    _portLock.release()
+    print 'Closed command port on %d' % port
 
 def closeAllPorts():
     '''
     Close all commandPorts opened via the openPort() function.
     '''
-    for port in _commandPorts:
-        closePort(port)
+
+    # closePort will modify _commandPorts, so we should avoid for loops.
+    while _commandPorts:
+        closePort(_commandPorts[0])
 
 # Close command ports when maya exits.  Maya already handles this when
 # it exits cleanly, but not when it crashes.  Depending on how severe
