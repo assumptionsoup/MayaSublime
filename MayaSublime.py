@@ -1,11 +1,12 @@
-from telnetlib import Telnet
-import time
-import sys
-import os
-import logging
-import threading
-import platform
 import collections
+import logging
+import os
+import platform
+import queue
+import socket
+import sys
+import threading
+import time
 
 import sublime
 import sublime_plugin
@@ -53,23 +54,32 @@ def get_time():
     else:
         return time.time()
 
+
 class AppendOutputCommand(sublime_plugin.TextCommand):
     def run(self, edit, text):
         self.view.insert(edit, self.view.size(), text)
 
+
 class SendToMayaCommand(sublime_plugin.TextCommand):
-    text_to_output = []
+    def __init__(self, *args, **kwargs):
+        self.output_queue = queue.Queue()
+        self.output_panel_name = 'MayaSublime'
+        self.output_search_dir = None
+        self.output_window = None
+        self.output_view = None
+        super(SendToMayaCommand, self).__init__(*args, **kwargs)
 
     def run(self, edit):
         # Find current document language with case insensitive search.
         syntax = self.view.settings().get('syntax')
-        lang = next((lang for lang in SUPPORTED_LANGUAGES if lang in syntax.lower()), None)
+        lang = next((lang for lang in SUPPORTED_LANGUAGES
+                     if lang in syntax.lower()), None)
         if lang is None:
             _logger.info('No recognized language found!')
             return
 
         # Make sure there is a port for that language
-        if '%s_port' % lang not in _settings.keys():
+        if '%s_port' % lang not in _settings:
             _logger.info('No port defined for %s language!', lang)
             return
 
@@ -87,29 +97,20 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
 
         # Maya expects \n, not os specific line breaks
         mCmd = str('\n'.join(source_lines))
-
-        _logger.info('Sending:\n%s...\n', mCmd[:200])
+        _logger.debug('Sending:\n%s...\n', mCmd)
 
         if lang == 'python':
-            file_name = self.view.file_name()
-            if file_name:
-                file_name = file_name.split('/')[-1]
-                file_name = file_name.split('\\')[-1]
-                file_name = '<%s>' % file_name
-            else:
-                file_name = '<untitled>'
             mCmd = ("import sublime_maya_interface\n"
                     "sublime_maya_interface.execute_sublime_code(%r, %r)" %
-                    (mCmd, file_name))
+                    (mCmd, self.view.file_name() or ''))
 
-        self.send_command(mCmd, _settings['hostname'], _settings['%s_port' % lang])
-
-    def is_python_plugin(self, file_contents):
-        pass
+        self.send_command(mCmd, _settings['hostname'],
+                          _settings['%s_port' % lang])
 
     def send_command(self, mCmd, host, port):
         '''Send the string mCmd to Maya using host:port'''
 
+        self.clear_output()
         connection = None
         if _ST3:
             mCmd = bytes(mCmd, 'utf-8')
@@ -117,104 +118,141 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
             mCmd = bytes(mCmd)
 
         try:
-            connection = Telnet(host, int(port), timeout=10)
-            connection.write(mCmd)
+            connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            connection.settimeout(3)
+            connection.connect((host, port))
+            connection.send(mCmd)
             if _settings['print_results']:
-                self.print_response(connection, 3)
+                self.print_response(connection)
         except Exception as e:
             err = str(e)
             sublime.error_message(
-                "Failed to communicate with Maya (%(host)s:%(port)s)):\n%(err)s" % locals()
+                ("Failed to communicate with Maya "
+                 "(%(host)s:%(port)s)):\n%(err)s") % locals()
             )
             raise
         finally:
             if connection is not None and not _settings['print_results']:
-                _logger.info('closing connection')
+                _logger.debug('Closing connection')
+                connection.shutdown(socket.SHUT_RDWR)
                 connection.close()
 
-    def print_response(self, connection, timeout):
+    def print_response(self, connection):
         '''Create a separate thread to print Maya's response'''
 
-        def print_response_thread():
-            start_time = get_time()
+        def print_response():
+            response_count = 0
+            while True:
+                try:
+                    response = connection.recv(8192)
+                except socket.timeout:
+                    break
+
+                if response:
+                    response_count += 1
+                    response = response.decode('utf-8')
+                    # Maya calls this the "response terminator" and
+                    # inserts it on every line. I call it "annoying".
+                    response = response.replace('\n\x00', '')
+
+                    # Maya likes sending "None" as it's first
+                    # response to anything. I don't know why.
+                    if response_count == 1 and response == 'None':
+                        continue
+
+                    self.output_queue.put(response)
+                    # Use this callback to avoid flickering when quickly
+                    # updating to the queue
+                    sublime.set_timeout(self.display_output, 0.05)
+                else:
+                    # If the socket dies, we'll end up here.
+                    break
+
+                time.sleep(0.1)
+
+        def run_in_thread():
             try:
-                while get_time() - start_time <= timeout:
-                    try:
-                        response = connection.read_very_eager()
-                    except EOFError:
-                        # Connection is closed
-                        break
-                    except AttributeError:
-                        pass
-
-                    if response:
-                        response = response.decode('utf-8')
-                        start_time = get_time()
-                        # Maya really likes extra newlines.
-                        seperator = '\n\n\n'
-                        response = response.replace(seperator, '\n')
-                        response = response.replace('None', '', 1)  # Maya likes sending the string 'None' first.
-                        response = response.strip()
-                        _logger.info('RESULTS:\n>%s\n' % '\n> '.join(response.splitlines()))
-                        if response:
-                            self.append_line_to_output(response)
-
-                        # Reset timer.
-                        sublime.set_timeout(self.display_output, 0)
-                self.text_to_output = []
+                print_response()
                 _logger.info('Done listening.')
             finally:
+                connection.shutdown(socket.SHUT_RDWR)
                 connection.close()
 
         # Start the thread
-        threading.Thread(target=print_response_thread).start()
+        threading.Thread(target=run_in_thread).start()
 
-    def append_line_to_output(self, text):
-        self.text_to_output.append(text)
-        sublime.set_timeout(self.display_output, 0)
-
-    def display_output(self, panel_name='MayaSublime'):
-        if not self.text_to_output:
-            return
-
-        # Default the to the current files directory
+    def init_output_panel(self):
         if not self.view:
             return
 
         file_name = self.view.file_name()
         if file_name is None:
-            file_name = '<untitled>'
+            working_dir = ''
+        else:
+            # Default the to the current files directory
+            working_dir = os.path.dirname(file_name)
 
-        win = self.view.window()
-        if not hasattr(self, 'output_view'):
-            self.output_view = win.get_output_panel(panel_name)
+        if self.output_search_dir == working_dir:
+            return
+        else:
+            self.output_search_dir = working_dir
 
-        view = self.output_view
-        working_dir = os.path.dirname(file_name)
+        self.output_window = self.view.window()
+        if not self.output_view:
+            self.output_view = self.output_window.get_output_panel(
+                self.output_panel_name)
 
         self.output_view.set_syntax_file('Packages/Python/Python.tmLanguage')
-        self.output_view.settings().set("result_file_regex", '^[ ]+File \"<(...*?)>\", line ([0-9]+)')
-        self.output_view.settings().set("result_line_regex", 'line ([0-9]+)')
-        self.output_view.settings().set("result_base_dir", working_dir)
+
+        # This regex magic is what makes tracebacks clickable
+        output_settings = self.output_view.settings()
+        output_settings.set("result_file_regex", '^\s+?File \"<(.*?)>\", line ([0-9]+)')
+        output_settings.set("result_line_regex", 'line ([0-9]+)')
+        output_settings.set("result_base_dir", self.output_search_dir)
 
         # Call get_output_panel a second time after assigning the above
         # settings, so that it'll be picked up as a result buffer
-        win.get_output_panel(panel_name)
+        self.output_window.get_output_panel(self.output_panel_name)
+
+    def clear_output(self):
+        # This is a bit of a hack.  I'm clearing the cache which informs
+        # init_output_panel that it needs to make a new window with
+        # correct regex.  Instead of "clearing" the output, I'm forcing
+        # a new panel to be created.
+        self.output_search_dir = None
+
+    def display_output(self):
+        if self.output_queue.empty():
+            return
+
+        if not self.view:
+            return
+
+        self.init_output_panel()
 
         # Write this text to the output panel and display it
-        view.run_command('append_output', {'text': '\n'.join(self.text_to_output)})
+        result = self.output_queue.get()
+        _logger.info('Results: %s' % result)
+        self.output_view.run_command('append_output', {'text': result})
 
-        # Show window
-        view.show(view.size())
-        win.run_command("show_panel", {"panel": "output.%s" % panel_name})
+
+        # Scroll view to end, placing the last line at the bottom of the
+        # panel
+        layout_height = self.output_view.layout_extent()[1]
+        viewpoert_height = self.output_view.viewport_extent()[1]
+        offset = layout_height - viewpoert_height
+        self.output_view.set_viewport_position((0, offset), False)
+
+        # Show view
+        self.output_window.run_command(
+            "show_panel", {"panel": "output.%s" % self.output_panel_name})
 
     def get_selection(self, whole_lines=False):
         '''
         Return current selection as a list of string source lines.
         '''
 
-        has_selection = False
-        # Store lines in map of (line_number, line_string)
+        # Store lines in map of {line_number: line_string}
         selected_lines = collections.defaultdict(str)
         for region in self.view.sel():
             if whole_lines:
@@ -234,9 +272,8 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
                 # Always append to the line, in case a multi-selection
                 # is on the same line
                 selected_lines[line_number] += line
-                has_selection = True
 
-        if has_selection:
+        if selected_lines:
             _logger.debug('Attempting to send current selection.')
             file_region = sublime.Region(0, self.view.size())
             last_line, col = self.view.rowcol(file_region.end())
@@ -261,8 +298,10 @@ class SendToMayaCommand(sublime_plugin.TextCommand):
         return range(start_line, end_line + 1)
 
     def get_file(self, lang):
-        '''Return list of strings needed to source file the current
-        file.  Obeys rules defined in _settings'''
+        """
+        Return list of strings needed to source the current file.
+        Obeys rules defined in _settings
+        """
         _logger.debug('Attempting to send current file.')
         source_lines = []
         if _settings['on_send_file'] == 'execute_file':
@@ -304,6 +343,7 @@ def sync_settings():
         value = so.get('maya_%s' % key)
         if value is not None:
             _settings[key] = value
+
 
 def plugin_loaded():
     settings_obj().clear_on_change("MayaSublime.sublime-settings")
